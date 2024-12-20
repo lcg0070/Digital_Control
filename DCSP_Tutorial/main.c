@@ -1,0 +1,143 @@
+//
+// Created by User on 2024-09-04.
+//
+#define _CRT_SECURE_NO_WARNINGS
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <windows.h>
+#include <time.h>
+#include "NIDAQmx.h"
+
+double GetWindowTime(void)
+{
+	LARGE_INTEGER	liEndCounter, liFrequency;
+
+	QueryPerformanceCounter(&liEndCounter);
+	QueryPerformanceFrequency(&liFrequency);
+
+	return(liEndCounter.QuadPart / (double)(liFrequency.QuadPart) * 1000.0);
+};
+
+#define   N_STEP		    (int)   ( FINAL_TIME*SAMPLING_FREQ )
+#define   FINAL_TIME		(double)(				5.0 )
+#define   SAMPLING_FREQ		(double)(               100 )  // 10Hz
+#define   SAMPLING_TIME     (double)( 1.0/SAMPLING_FREQ )
+#define   UNIT_PI			(double)( 3.14159265358979  )
+
+enum LogicFlag{ NOK, YOK};
+
+
+#define WRITE_SINGLE_CH_AO( task, value) DAQmxWriteAnalogScalarF64(taskAO, 1.0, 5.0, Vcmd, NULL);
+#define INIT_BUF(buf)						memset(&buf, 0, sizeof(buf));
+
+
+typedef struct
+{
+	double OutData[1000];
+	double StopCondition;
+}DEBUG;
+
+DEBUG debug;
+typedef double REAL;
+typedef unsigned int COUNT;
+
+typedef struct
+{
+	REAL prev;
+	REAL curr;
+}TIME;
+TIME Time;
+// ------------------------------------------------------------------------------------------
+
+int main(void)
+{
+	FILE*		pFile;
+	memset( &Time, 0, sizeof(TIME));
+	INIT_BUF(Time);
+
+	// Time.curr = 0.0;
+	// Time.prev = 0.0;
+
+	double		time_curr = 0.0;
+	double		time_init = 0.0;
+	double		time;
+	char		OutFileName[100] = { "" };
+
+	double		Freq = 1.0;
+
+	int			idx = 0;
+	int			count = 0;
+
+	unsigned	i = 0;
+	double		Standard = 2.5;
+	double		OutData[N_STEP] = { 0.0, };
+	double		OutTime[N_STEP] = { 0.0, };
+	double		OutVcmd[N_STEP] = { 0.0, };
+
+	double		Vcmd = 0.0;
+	float64		Vin = 0.0;
+
+	TaskHandle	taskAI = 0;
+	TaskHandle	taskAO = 0;
+
+	DAQmxCreateTask("", &taskAI);
+	DAQmxCreateTask("", &taskAO);
+
+	DAQmxCreateAIVoltageChan(taskAI, "Dev1/ai0", "", DAQmx_Val_RSE, -10.0, 10.0, DAQmx_Val_Volts, "");
+	DAQmxCreateAOVoltageChan(taskAO, "Dev1/ao0", "", 0.0, 5.0, DAQmx_Val_Volts, "");
+
+	DAQmxStartTask(taskAI);
+	DAQmxStartTask(taskAO);
+
+	printf("Press any key to start the program.... \n");
+	getchar();
+
+	time_init = GetWindowTime();
+
+	// main loop
+	do
+	{
+		time = SAMPLING_TIME * count;
+
+		/* DAQ Reading */
+		DAQmxReadAnalogScalarF64(taskAI, 10.0, &Vin, NULL);
+
+		/* DAQ Writing : Analog Output */
+		Vcmd = Standard * 1.0 * (sin(2.0 * UNIT_PI * Freq * time)) + 2.5;
+		WRITE_SINGLE_CH_AO(taskAO, Vcmd);
+		// DAQmxWriteAnalogScalarF64(taskAO, 1.0, 5.0, Vcmd, NULL);
+
+		/* Memory Write */
+		OutTime[count] = time;
+		OutVcmd[count] = Vcmd;
+		OutData[count] = Vin;
+
+		/* check the simulation time and loop count */
+		while (YOK)
+		{
+			time_curr = GetWindowTime();
+
+			if (time_curr - (time_init + SAMPLING_TIME * (double)count) >= (SAMPLING_TIME * 1000.0))	break;
+		}
+	} while (count++ < N_STEP - 1);
+
+	DAQmxStopTask(taskAI);
+	DAQmxStopTask(taskAO);
+
+	/* Data Print */
+
+	sprintf(OutFileName, "%1.1f", Freq);
+
+	pFile = fopen(strcat(OutFileName, "_data.out"), "w+t");
+
+	for (idx = 0; idx < N_STEP; idx++)
+	{
+		fprintf(pFile, "%20.10f %20.10f %20.10f\n", OutTime[idx], OutVcmd[idx], OutData[idx]);
+	}
+
+	fclose(pFile);
+	// fcloseall();
+
+}
